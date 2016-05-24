@@ -3992,8 +3992,10 @@ LibraryManager.library = {
     return 0; // we cannot succeed
   },
 
+  _Unwind_RaiseException__deps: ['__cxa_throw'],
   _Unwind_RaiseException: function(ex) {
-    abort('Unwind_RaiseException');
+    Module.printErr('Warning: _Unwind_RaiseException is not correctly implemented');
+    return ___cxa_throw(ex, 0, 0);
   },
 
   _Unwind_DeleteException: function(ex) {

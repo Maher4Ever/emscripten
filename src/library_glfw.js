@@ -39,6 +39,7 @@ var LibraryGLFW = {
       this.id = id;
       this.x = 0;
       this.y = 0;
+      this.fullscreen = false; // Used to determine if app in fullscreen mode
       this.storedX = 0; // Used to store X before fullscreen
       this.storedY = 0; // Used to store Y before fullscreen
       this.width = width;
@@ -407,6 +408,26 @@ var LibraryGLFW = {
 #endif
     },
 
+    onMouseenter: function(event) {
+      if (!GLFW.active) return;
+
+      if (event.target != Module["canvas"] || !GLFW.active.cursorEnterFunc) return;
+
+#if USE_GLFW == 3
+      Runtime.dynCall('vii', GLFW.active.cursorEnterFunc, [GLFW.active.id, 1]);
+#endif
+    },
+
+    onMouseleave: function(event) {
+      if (!GLFW.active) return;
+
+      if (event.target != Module["canvas"] || !GLFW.active.cursorEnterFunc) return;
+
+#if USE_GLFW == 3
+      Runtime.dynCall('vii', GLFW.active.cursorEnterFunc, [GLFW.active.id, 0]);
+#endif
+    },
+
     onMouseButtonChanged: function(event, status) {
       if (!GLFW.active || !GLFW.active.mouseButtonFunc) return;
 
@@ -480,9 +501,12 @@ var LibraryGLFW = {
       event.preventDefault();
     },
 
-    onFullScreenEventChange: function() {
+    onCanvasResize: function(width, height) {
       if (!GLFW.active) return;
 
+      var resizeNeeded = true;
+
+      // If the client is requestiong fullscreen mode
       if (document["fullScreen"] || document["mozFullScreen"] || document["webkitIsFullScreen"]) {
         GLFW.active.storedX = GLFW.active.x;
         GLFW.active.storedY = GLFW.active.y;
@@ -491,14 +515,37 @@ var LibraryGLFW = {
         GLFW.active.x = GLFW.active.y = 0;
         GLFW.active.width = screen.width;
         GLFW.active.height = screen.height;
-      } else {
+        GLFW.active.fullscreen = true;
+
+      // If the client is reverting from fullscreen mode
+      } else if (GLFW.active.fullscreen == true) {
         GLFW.active.x = GLFW.active.storedX;
         GLFW.active.y = GLFW.active.storedY;
         GLFW.active.width = GLFW.active.storedWidth;
         GLFW.active.height = GLFW.active.storedHeight;
+        GLFW.active.fullscreen = false;
+
+      // If the width/height values do not match current active window sizes
+      } else if (GLFW.active.width != width || GLFW.active.height != height) {
+          GLFW.active.width = width;
+          GLFW.active.height = height;
+      } else {
+        resizeNeeded = false;
       }
 
-      Browser.setCanvasSize(GLFW.active.width, GLFW.active.height, true); // resets the canvas size to counter the aspect preservation of Browser.updateCanvasDimensions
+      // If any of the above conditions were true, we need to resize the canvas
+      if (resizeNeeded) {
+        // resets the canvas size to counter the aspect preservation of Browser.updateCanvasDimensions
+        Browser.setCanvasSize(GLFW.active.width, GLFW.active.height);
+        // TODO: Client dimensions (clientWidth/clientHeight) vs pixel dimensions (width/height) of
+        // the canvas should drive window and framebuffer size respectfully.
+        GLFW.onWindowSizeChanged();
+        GLFW.onFramebufferSizeChanged();
+      }
+    },
+
+    onWindowSizeChanged: function() {
+      if (!GLFW.active) return;
 
       if (!GLFW.active.windowSizeFunc) return;
 
@@ -508,6 +555,16 @@ var LibraryGLFW = {
 
 #if USE_GLFW == 3
       Runtime.dynCall('viii', GLFW.active.windowSizeFunc, [GLFW.active.id, GLFW.active.width, GLFW.active.height]);
+#endif
+    },
+
+    onFramebufferSizeChanged: function() {
+      if (!GLFW.active) return;
+
+      if (!GLFW.active.framebufferSizeFunc) return;
+
+#if USE_GLFW == 3
+      Runtime.dynCall('viii', GLFW.active.framebufferSizeFunc, [GLFW.active.id, GLFW.active.width, GLFW.active.height]);
 #endif
     },
 
@@ -866,9 +923,11 @@ var LibraryGLFW = {
     Module["canvas"].addEventListener("mouseup", GLFW.onMouseButtonUp, true);
     Module["canvas"].addEventListener('wheel', GLFW.onMouseWheel, true);
     Module["canvas"].addEventListener('mousewheel', GLFW.onMouseWheel, true);
+    Module["canvas"].addEventListener('mouseenter', GLFW.onMouseenter, true);
+    Module["canvas"].addEventListener('mouseleave', GLFW.onMouseleave, true);
 
     Browser.resizeListeners.push(function(width, height) {
-       GLFW.onFullScreenEventChange();
+       GLFW.onCanvasResize(width, height);
     });
     return 1; // GL_TRUE
   },
@@ -882,6 +941,8 @@ var LibraryGLFW = {
     Module["canvas"].removeEventListener("mouseup", GLFW.onMouseButtonUp, true);
     Module["canvas"].removeEventListener('wheel', GLFW.onMouseWheel, true);
     Module["canvas"].removeEventListener('mousewheel', GLFW.onMouseWheel, true);
+    Module["canvas"].removeEventListener('mouseenter', GLFW.onMouseenter, true);
+    Module["canvas"].removeEventListener('mouseleave', GLFW.onMouseleave, true);
     Module["canvas"].width = Module["canvas"].height = 1;
     GLFW.windows = null;
     GLFW.active = null;
@@ -1137,7 +1198,7 @@ var LibraryGLFW = {
   glfwSetFramebufferSizeCallback: function(winid, cbfun) {
     var win = GLFW.WindowFromId(winid);
     if (!win) return;
-    win.windowFramebufferSizeFunc = cbfun;
+    win.framebufferSizeFunc = cbfun;
   },
 
   glfwGetInputMode: function(winid, mode) {

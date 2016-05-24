@@ -6929,13 +6929,20 @@ def process(filename):
     src = r'''
     #include <stdio.h>
     #include <math.h>
+    
+    // We have to use a proxy function 'acos_test' here because the updated libc++ library provides a set of overloads to acos,
+    // this has the result that we can't take the function pointer to acos anymore due to failed overload resolution.
+    // This proxy function has no overloads so it's allowed to take the function pointer directly.
+    double acos_test(double x) {
+      return acos(x);
+    }
 
     typedef double (*ddd)(double x, double unused);
     typedef int    (*iii)(int x,    int unused);
 
     int main() {
-      volatile ddd d = (ddd)acos;
-      volatile iii i = (iii)acos;
+      volatile ddd d = (ddd)acos_test;
+      volatile iii i = (iii)acos_test;
       printf("|%.3f,%d|\n", d(0.3, 0.6), i(0, 0));
       return 0;
     }
@@ -8057,7 +8064,10 @@ asm2f = make_run("asm2f", compiler=CLANG, emcc_args=["-Oz", "-s", "PRECISE_F32=1
 asm2g = make_run("asm2g", compiler=CLANG, emcc_args=["-O2", "-g", "-s", "ASSERTIONS=1", "-s", "SAFE_HEAP=1"])
 asm2i = make_run("asm2i", compiler=CLANG, emcc_args=["-O2", '-s', 'EMTERPRETIFY=1'])
 #asm2m = make_run("asm2m", compiler=CLANG, emcc_args=["-O2", "--memory-init-file", "0", "-s", "MEM_INIT_METHOD=2", "-s", "ASSERTIONS=1"])
-#binaryen = make_run("binaryen", compiler=CLANG, emcc_args=['-O2', '-s', 'BINARYEN=1', '-s', 'BINARYEN_METHOD="interpret-s-expr"'])
+#binaryen0 = make_run("binaryen", compiler=CLANG, emcc_args=['-O0', '-s', 'BINARYEN=1', '-s', 'BINARYEN_METHOD="interpret-s-expr"'])
+#binaryen1 = make_run("binaryen", compiler=CLANG, emcc_args=['-O1', '-s', 'BINARYEN=1', '-s', 'BINARYEN_METHOD="interpret-s-expr"'])
+#binaryen2 = make_run("binaryen", compiler=CLANG, emcc_args=['-O2', '-s', 'BINARYEN=1', '-s', 'BINARYEN_METHOD="interpret-s-expr"'])
+#binaryen3 = make_run("binaryen", compiler=CLANG, emcc_args=['-O3', '-s', 'BINARYEN=1', '-s', 'BINARYEN_METHOD="interpret-s-expr"'])
 #normalyen = make_run("normalyen", compiler=CLANG, emcc_args=['-O0', '-s', 'GLOBAL_BASE=1024']) # useful comparison to binaryen
 #spidaryen = make_run("binaryen", compiler=CLANG, emcc_args=['-O0', '-s', 'BINARYEN=1', '-s', 'BINARYEN_SCRIPTS="spidermonkify.py"'])
 
@@ -8065,4 +8075,3 @@ asm2i = make_run("asm2i", compiler=CLANG, emcc_args=["-O2", '-s', 'EMTERPRETIFY=
 asm2nn = make_run("asm2nn", compiler=CLANG, emcc_args=["-O2"], env={"EMCC_NATIVE_OPTIMIZER": "0"})
 
 del T # T is just a shape for the specific subclasses, we don't test it itself
-

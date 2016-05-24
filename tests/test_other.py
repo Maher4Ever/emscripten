@@ -752,7 +752,7 @@ This pointer might make sense in another type signature:''', '''Invalid function
       }),
     ]:
       Building.COMPILER_TEST_OPTS = test_opts
-      test('zlib', path_from_root('tests', 'zlib', 'example.c'), 
+      test('zlib', path_from_root('tests', 'zlib', 'example.c'),
                    get_zlib_library(self),
                    open(path_from_root('tests', 'zlib', 'ref.txt'), 'r').read(),
                    expected_ranges,
@@ -1532,7 +1532,7 @@ int f() {
   def test_bullet(self):
     Building.emcc(path_from_root('tests','bullet_hello_world.cpp'), ['-s', 'USE_BULLET=1'], output_filename='a.out.js')
     self.assertContained('BULLET RUNNING', Popen(JS_ENGINES[0] + ['a.out.js'], stdout=PIPE, stderr=PIPE).communicate()[0])
-  
+
   def test_vorbis(self):
     #This will also test if ogg compiles, because vorbis depends on ogg
     Building.emcc(path_from_root('tests','vorbis_test.c'), ['-s', 'USE_VORBIS=1'], output_filename='a.out.js')
@@ -2013,7 +2013,7 @@ int f() {
       print args, fail
       self.clear()
       try_delete(self.in_dir('a.out.js'))
-      
+
       testFiles = [
         path_from_root('tests', 'embind', 'underscore-1.4.2.js'),
         path_from_root('tests', 'embind', 'imvu_test_adapter.js'),
@@ -2217,7 +2217,8 @@ seeked= file.
     # run again, should not recrunch!
     time.sleep(0.1)
     Popen([PYTHON, FILE_PACKAGER, 'test.data', '--crunch=32', '--preload', 'ship.dds'], stdout=open('pre.js', 'w')).communicate()
-    assert crunch_time == os.stat('ship.crn').st_mtime, 'Crunch is unchanged'
+    if 'linux' in sys.platform: # OS time reporting in other OSes (OS X) seems flaky here
+      assert crunch_time == os.stat('ship.crn').st_mtime, 'Crunch is unchanged ' + str([crunch_time, os.stat('ship.crn').st_mtime])
     # update dds, so should recrunch
     time.sleep(0.1)
     os.utime('ship.dds', None)
@@ -3357,7 +3358,7 @@ int main(int argc, char **argv) {
     self.assertContained(r'''Failed to rename paths: abc, ; errno=2''', run_js('a.out.js', args=['abc', '']))
 
   def test_readdir_r_silly(self):
-    open('src.cpp', 'w').write(r'''  
+    open('src.cpp', 'w').write(r'''
 #include <iostream>
 #include <cstring>
 #include <cerrno>
@@ -5459,9 +5460,9 @@ mergeInto(LibraryManager.library, {
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
- 
+
 #define TEST_PATH "/boot/README.txt"
- 
+
 int
 main(int argc, char **argv)
 {
@@ -6355,3 +6356,31 @@ int main() {}
     self.function_eliminator_test_helper('test-function-eliminator-replace-variable-value-with-hash-info.js',
                                          'test-function-eliminator-replace-variable-value-output.js',
                                          use_hash_info=True)
+
+  def test_cyberdwarf_pointers(self):
+    check_execute([PYTHON, EMCC, path_from_root('tests', 'debugger', 'test_pointers.cpp'), '-Oz', '-s', 'CYBERDWARF=1',
+    '-std=c++11', '--pre-js', path_from_root('tests', 'debugger', 'test_preamble.js'), '-o', 'test_pointers.js' ], stderr=PIPE)
+    run_js('test_pointers.js', engine=NODE_JS)
+
+  def test_cyberdwarf_union(self):
+    check_execute([PYTHON, EMCC, path_from_root('tests', 'debugger', 'test_union.cpp'), '-Oz', '-s', 'CYBERDWARF=1',
+    '-std=c++11', '--pre-js', path_from_root('tests', 'debugger', 'test_preamble.js'), '-o', 'test_union.js' ], stderr=PIPE)
+    run_js('test_union.js', engine=NODE_JS)
+
+  def test_source_file_with_fixed_language_mode(self):
+    open('src_tmp_fixed_lang', 'w').write('''
+#include <string>
+#include <iostream>
+
+int main() {
+  std::cout << "Test_source_fixed_lang_hello" << std::endl;
+  return 0;
+}
+    ''')
+    stdout, stderr = Popen([PYTHON, EMCC, '-Wall', '-std=c++14', '-x', 'c++', 'src_tmp_fixed_lang'], stderr=PIPE).communicate()
+    self.assertNotContained("Input file has an unknown suffix, don't know what to do with it!", stderr)
+    self.assertNotContained("Unknown file suffix when compiling to LLVM bitcode", stderr)
+    self.assertContained("Test_source_fixed_lang_hello", run_js('a.out.js'))
+    
+    stdout, stderr = Popen([PYTHON, EMCC, '-Wall', '-std=c++14', 'src_tmp_fixed_lang'], stderr=PIPE).communicate()
+    self.assertContained("Input file has an unknown suffix, don't know what to do with it!", stderr)

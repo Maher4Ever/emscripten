@@ -128,9 +128,9 @@ def run():
         break
 
   if len(sys.argv) == 1 or '--help' in sys.argv:
-    # Documentation for emcc and its options must be updated in: 
+    # Documentation for emcc and its options must be updated in:
     #    site/source/docs/tools_reference/emcc.rst
-    # A prebuilt local version of the documentation is available at: 
+    # A prebuilt local version of the documentation is available at:
     #    site/build/text/docs/tools_reference/emcc.txt
     #    (it is read from there and printed out when --help is invoked)
     # You can also build docs locally as HTML or other formats in site/
@@ -241,7 +241,7 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
         idx += 1
 
     if compiler == shared.EMCC: compiler = [shared.PYTHON, shared.EMCC]
-    else: compiler = [compiler] 
+    else: compiler = [compiler]
     cmd = compiler + list(filter_emscripten_options(sys.argv[1:]))
     if not use_js: cmd += shared.EMSDK_OPTS + ['-D__EMSCRIPTEN__', '-DEMSCRIPTEN']
     if use_js: cmd += ['-s', 'ERROR_ON_UNDEFINED_SYMBOLS=1'] # configure tests should fail when an undefined symbol exists
@@ -482,6 +482,24 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
         raise Exception(err_msg)
       return level
 
+    def detect_fixed_language_mode(args):
+      check_next = False
+      for item in args:
+        if check_next:
+          if item in ("c++", "c"):
+            return True
+          else:
+            check_next = False
+        if item.startswith("-x"):
+          lmode = item[2:] if len(item) > 2 else None
+          if lmode in ("c++", "c"):
+            return True
+          else:
+            check_next = True
+            continue
+      return False
+
+    has_fixed_language_mode = detect_fixed_language_mode(newargs)
     should_exit = False
 
     for i in range(len(newargs)):
@@ -500,11 +518,6 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
           shrink_level = 2
           settings_changes.append('INLINING_LIMIT=25')
         opt_level = validate_arg_level(requested_level, 3, 'Invalid optimization level: ' + newargs[i])
-        # We leave the -O option in place so that the clang front-end runs in that
-        # optimization mode, but we disable the actual optimization passes, as we'll
-        # run them separately.
-        newargs.append('-mllvm')
-        newargs.append('-disable-llvm-optzns')
       elif newargs[i].startswith('--js-opts'):
         check_bad_eq(newargs[i])
         js_opts = eval(newargs[i+1])
@@ -822,8 +835,13 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
               logging.error(arg + ': Unknown format, not a static library!')
             exit(1)
         else:
-          logging.error(arg + ": Input file has an unknown suffix, don't know what to do with it!")
-          exit(1)
+          if has_fixed_language_mode:
+            newargs[i] = ''
+            input_files.append((i, arg))
+            has_source_inputs = True
+          else:
+            logging.error(arg + ": Input file has an unknown suffix, don't know what to do with it!")
+            exit(1)
       elif arg.startswith('-L'):
         lib_dirs.append(arg[2:])
         newargs[i] = ''
@@ -1134,6 +1152,14 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
       debug_level = max(1, debug_level) # keep whitespace readable, for asm.js parser simplicity
       shared.Settings.GLOBAL_BASE = 1024 # leave some room for mapping global vars
       assert not shared.Settings.SPLIT_MEMORY, 'WebAssembly does not support split memory'
+      if not shared.Settings.BINARYEN_METHOD:
+        shared.Settings.BINARYEN_METHOD = 'native-wasm,interpret-binary'
+
+    if shared.Settings.CYBERDWARF:
+      newargs.append('-g')
+      shared.Settings.BUNDLED_CD_DEBUG_FILE = target + ".cd"
+      js_libraries.append(shared.path_from_root('src', 'library_cyberdwarf.js'))
+      js_libraries.append(shared.path_from_root('src', 'library_debugger_toolkit.js'))
 
     if tracing:
       if shared.Settings.ALLOW_MEMORY_GROWTH:
@@ -1146,6 +1172,17 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
 
     if shared.Settings.GLOBAL_BASE < 0:
       shared.Settings.GLOBAL_BASE = 8 # default if nothing else sets it
+
+    if shared.Settings.WASM_BACKEND:
+      if shared.Settings.SIMD:
+        newargs.append('-msimd128')
+    else:
+      # We leave the -O option in place so that the clang front-end runs in that
+      # optimization mode, but we disable the actual optimization passes, as we'll
+      # run them separately.
+      if opt_level > 0:
+        newargs.append('-mllvm')
+        newargs.append('-disable-llvm-optzns')
 
     shared.Settings.EMSCRIPTEN_VERSION = shared.EMSCRIPTEN_VERSION
     shared.Settings.OPT_LEVEL = opt_level
@@ -1211,19 +1248,22 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
       logging.debug(('just preprocessor ' if '-E' in newargs else 'just dependencies: ') + ' '.join(cmd))
       exit(subprocess.call(cmd))
 
+    def compile_source_file(i, input_file):
+      logging.debug('compiling source file: ' + input_file)
+      output_file = get_bitcode_file(input_file)
+      temp_files.append((i, output_file))
+      args = get_bitcode_args([input_file]) + ['-emit-llvm', '-c', '-o', output_file]
+      logging.debug("running: " + ' '.join(args))
+      execute(args) # let compiler frontend print directly, so colors are saved (PIPE kills that)
+      if not os.path.exists(output_file):
+        logging.error('compiler frontend failed to generate LLVM bitcode, halting')
+        sys.exit(1)
+
     # First, generate LLVM bitcode. For each input file, we get base.o with bitcode
     for i, input_file in input_files:
       file_ending = filename_type_ending(input_file)
       if file_ending.endswith(SOURCE_ENDINGS):
-        logging.debug('compiling source file: ' + input_file)
-        output_file = get_bitcode_file(input_file)
-        temp_files.append((i, output_file))
-        args = get_bitcode_args([input_file]) + ['-emit-llvm', '-c', '-o', output_file]
-        logging.debug("running: " + ' '.join(args))
-        execute(args) # let compiler frontend print directly, so colors are saved (PIPE kills that)
-        if not os.path.exists(output_file):
-          logging.error('compiler frontend failed to generate LLVM bitcode, halting')
-          sys.exit(1)
+        compile_source_file(i, input_file)
       else: # bitcode
         if file_ending.endswith(BITCODE_ENDINGS):
           logging.debug('using bitcode file: ' + input_file)
@@ -1238,12 +1278,15 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
             shared.Building.llvm_as(input_file, temp_file)
             temp_files.append((i, temp_file))
         else:
-          logging.error(input_file + ': Unknown file suffix when compiling to LLVM bitcode!')
-          sys.exit(1)
+          if has_fixed_language_mode:
+            compile_source_file(i, input_file)
+          else:
+            logging.error(input_file + ': Unknown file suffix when compiling to LLVM bitcode!')
+            sys.exit(1)
 
     log_time('bitcodeize inputs')
 
-    if not LEAVE_INPUTS_RAW:
+    if not LEAVE_INPUTS_RAW and not shared.Settings.WASM_BACKEND:
       assert len(temp_files) == len(input_files)
 
       # Optimize source files
@@ -1317,7 +1360,7 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
 
     log_time('calculate system libraries')
 
-    # final will be an array if linking is deferred, otherwise a normal string. 
+    # final will be an array if linking is deferred, otherwise a normal string.
     DEFAULT_FINAL = in_temp(target_basename + '.bc')
     def get_final():
       global final
@@ -1372,7 +1415,7 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
 
     # Optimize, if asked to
     if not LEAVE_INPUTS_RAW:
-      link_opts = [] if debug_level >= 4 else ['-strip-debug'] # remove LLVM debug if we are not asked for it
+      link_opts = [] if debug_level >= 4 or shared.Settings.CYBERDWARF else ['-strip-debug'] # remove LLVM debug if we are not asked for it
       if not shared.Settings.ASSERTIONS:
         link_opts += ['-disable-verify']
 
@@ -1437,6 +1480,10 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
       wasm_temp = final[:-3] + '.wast'
       shutil.move(wasm_temp, wasm_text_target)
       open(wasm_text_target + '.mappedGlobals', 'w').write('{}') # no need for mapped globals for now, but perhaps some day
+
+    if shared.Settings.CYBERDWARF:
+      cd_target = final + '.cd'
+      shutil.move(cd_target, target + '.cd')
 
     log_time('emscript (llvm => executable code)')
 
@@ -1588,7 +1635,7 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
             passes = ['asm'] + passes
             if shared.Settings.PRECISE_F32:
               passes = ['asmPreciseF32'] + passes
-            if emit_symbol_map and 'minifyNames' in passes:
+            if (emit_symbol_map or shared.Settings.CYBERDWARF) and 'minifyNames' in passes:
               passes += ['symbolMap='+target+'.symbols']
             if profiling_funcs and 'minifyNames' in passes:
               passes += ['profilingFuncs']
@@ -1811,6 +1858,10 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
     #src = re.sub(r'\n+[ \n]*\n+', '\n', src)
     #open(final, 'w').write(src)
 
+    # Bundle symbol data in with the cyberdwarf file
+    if shared.Settings.CYBERDWARF:
+        execute([shared.PYTHON, shared.path_from_root('tools', 'emdebug_cd_merger.py'), target + '.cd', target+'.symbols'])
+
     # Emit source maps, if needed
     if debug_level >= 4:
       logging.debug('generating source maps')
@@ -1837,6 +1888,7 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
         shutil.move(temp, asm_target)
 
     if shared.Settings.BINARYEN:
+      logging.debug('using binaryen, with method: ' + shared.Settings.BINARYEN_METHOD)
       binaryen_bin = os.path.join(shared.Settings.BINARYEN_ROOT, 'bin')
       # Emit wasm.js at the top of the js. This is *not* optimized with the rest of the code, since
       # (1) it contains asm.js, whose validation would be broken, and (2) it's very large so it would
@@ -1876,7 +1928,7 @@ There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR P
         for script in shared.Settings.BINARYEN_SCRIPTS.split(','):
           logging.debug('running binaryen script: ' + script)
           subprocess.check_call([shared.PYTHON, os.path.join(binaryen_scripts, script), js_target, wasm_text_target], env=script_env)
-      if 'interpret-binary' in shared.Settings.BINARYEN_METHOD:
+      if 'native-wasm' in shared.Settings.BINARYEN_METHOD or 'interpret-binary' in shared.Settings.BINARYEN_METHOD:
         logging.debug('wasm-as (wasm => binary)')
         subprocess.check_call([os.path.join(binaryen_bin, 'wasm-as'), wasm_text_target, '-o', wasm_binary_target])
         shutil.copyfile(wasm_text_target + '.mappedGlobals', wasm_binary_target + '.mappedGlobals')

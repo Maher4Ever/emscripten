@@ -141,29 +141,34 @@ def calculate(temp_files, in_temp, stdout_, stderr_, forced=[]):
     logging.debug('building libcxx for cache')
     libcxx_files = [
       'algorithm.cpp',
-      'condition_variable.cpp',
-      'future.cpp',
-      'iostream.cpp',
-      'memory.cpp',
-      'random.cpp',
-      'stdexcept.cpp',
-      'system_error.cpp',
-      'utility.cpp',
+      'any.cpp',
       'bind.cpp',
-      'debug.cpp',
-      'hash.cpp',
-      'mutex.cpp',
-      'string.cpp',
-      'thread.cpp',
-      'valarray.cpp',
       'chrono.cpp',
+      'condition_variable.cpp',
+      'debug.cpp',
       'exception.cpp',
+      'future.cpp',
+      'hash.cpp',
       'ios.cpp',
+      'iostream.cpp',
       'locale.cpp',
+      'memory.cpp',
+      'mutex.cpp',
+      'new.cpp',
+      'optional.cpp',
+      'random.cpp',
       'regex.cpp',
-      'strstream.cpp'
+      'shared_mutex.cpp',
+      'stdexcept.cpp',
+      'string.cpp',
+      'strstream.cpp',
+      'system_error.cpp',
+      'thread.cpp',
+      'typeinfo.cpp',
+      'utility.cpp',
+      'valarray.cpp'
     ]
-    return build_libcxx(os.path.join('system', 'lib', 'libcxx'), libname, libcxx_files, ['-Oz', '-I' + shared.path_from_root('system', 'lib', 'libcxxabi', 'include')], has_noexcept_version=True)
+    return build_libcxx(os.path.join('system', 'lib', 'libcxx'), libname, libcxx_files, ['-DLIBCXX_BUILDING_LIBCXXABI=1', '-Oz', '-I' + shared.path_from_root('system', 'lib', 'libcxxabi', 'include')], has_noexcept_version=True)
 
   # libcxxabi - just for dynamic_cast for now
   def create_libcxxabi(libname):
@@ -180,8 +185,7 @@ def calculate(temp_files, in_temp, stdout_, stderr_, forced=[]):
       'exception.cpp',
       'stdexcept.cpp',
       'typeinfo.cpp',
-      'private_typeinfo.cpp',
-      os.path.join('..', '..', 'libcxx', 'new.cpp'),
+      'private_typeinfo.cpp'
     ]
     return build_libcxx(os.path.join('system', 'lib', 'libcxxabi', 'src'), libname, libcxxabi_files, ['-Oz', '-I' + shared.path_from_root('system', 'lib', 'libcxxabi', 'include')])
 
@@ -192,7 +196,7 @@ def calculate(temp_files, in_temp, stdout_, stderr_, forced=[]):
     return o
 
   def create_compiler_rt(libname):
-    srcdir = shared.path_from_root('system', 'lib', 'compiler-rt')
+    srcdir = shared.path_from_root('system', 'lib', 'compiler-rt', 'lib', 'builtins')
     filenames = ['divdc3.c', 'divsc3.c', 'muldc3.c', 'mulsc3.c']
     files = (os.path.join(srcdir, f) for f in filenames)
 
@@ -203,7 +207,7 @@ def calculate(temp_files, in_temp, stdout_, stderr_, forced=[]):
       commands.append([shared.PYTHON, shared.EMCC, shared.path_from_root('system', 'lib', src), '-O2', '-o', o])
       o_s.append(o)
     run_commands(commands)
-    shared.Building.link(o_s, in_temp(libname))
+    shared.Building.emar('cr', in_temp(libname), o_s)
     return in_temp(libname)
 
   def create_dlmalloc(out_name, clflags):
@@ -231,6 +235,33 @@ def calculate(temp_files, in_temp, stdout_, stderr_, forced=[]):
     lib = in_temp(libname)
     shared.Building.link([dlmalloc_o, split_malloc_o], lib)
     return lib
+
+  def create_wasm_compiler_rt(libname):
+    srcdir = shared.path_from_root('system', 'lib', 'compiler-rt', 'lib', 'builtins')
+    filenames = ['addtf3.c', 'ashlti3.c', 'ashrti3.c', 'comparetf2.c', 'divtf3.c', 'divti3.c',
+                 'extenddftf2.c', 'extendsftf2.c',
+                 'fixdfti.c', 'fixsfti.c', 'fixtfdi.c', 'fixtfsi.c', 'fixtfti.c',
+                 'fixunsdfti.c', 'fixunssfti.c', 'fixunstfdi.c', 'fixunstfsi.c', 'fixunstfti.c',
+                 'floatditf.c', 'floatsitf.c', 'floattidf.c', 'floattisf.c',
+                 'floatunditf.c', 'floatunsitf.c', 'floatuntidf.c', 'floatuntisf.c', 'lshrti3.c',
+                 'modti3.c', 'multf3.c', 'multi3.c', 'subtf3.c', 'udivti3.c', 'umodti3.c', 'ashrdi3.c',
+                 'ashldi3.c', 'fixdfdi.c', 'floatdidf.c', 'lshrdi3.c', 'moddi3.c',
+                 'trunctfdf2.c', 'umoddi3.c', 'fixunsdfdi.c', 'muldi3.c',
+                 'divdi3.c', 'divmoddi4.c', 'udivdi3.c', 'udivmoddi4.c']
+    files = (os.path.join(srcdir, f) for f in filenames)
+    o_s = []
+    commands = []
+    for src in files:
+      o = in_temp(os.path.basename(src) + '.o')
+      # Use clang directly instead of emcc. Since emcc's intermediate format (produced by -S) is LLVM IR, there's no way to
+      # get emcc to output wasm .s files, which is what we archive in compiler_rt.
+      commands.append([shared.CLANG_CC, '--target=wasm32', '-S', shared.path_from_root('system', 'lib', src), '-O2', '-o', o])
+      o_s.append(o)
+    run_commands(commands)
+    lib = in_temp(libname)
+    run_commands([[shared.LLVM_AR, 'cr', '-format=gnu', lib] + o_s])
+    return lib
+
 
   # Setting this in the environment will avoid checking dependencies and make building big projects a little faster
   # 1 means include everything; otherwise it can be the name of a lib (libcxx, etc.)
@@ -302,7 +333,7 @@ def calculate(temp_files, in_temp, stdout_, stderr_, forced=[]):
   system_libs = [('libcxx',      'a',  create_libcxx,      libcxx_symbols,      ['libcxxabi'], True),
                  ('libcxxabi',   'bc', create_libcxxabi,   libcxxabi_symbols,   ['libc'],      False),
                  ('gl',          'bc', create_gl,          gl_symbols,          ['libc'],      False),
-                 ('compiler-rt', 'bc', create_compiler_rt, compiler_rt_symbols, ['libc'],      False)]
+                 ('compiler-rt', 'a',  create_compiler_rt, compiler_rt_symbols, ['libc'],      False)]
 
   # malloc dependency is force-added, so when using pthreads, it must be force-added
   # as well, since malloc needs to be thread-safe, so it depends on mutexes.
@@ -380,6 +411,11 @@ def calculate(temp_files, in_temp, stdout_, stderr_, forced=[]):
       ret.append(libfile)
       force = force.union(deps)
   ret.sort(key=lambda x: x.endswith('.a')) # make sure to put .a files at the end.
+
+  # Handle backend compiler_rt separately because it is not a bitcode system lib like the others.
+  # Here, just ensure that it's in the cache.
+  if shared.Settings.BINARYEN and shared.Settings.WASM_BACKEND:
+    crt_file = shared.Cache.get('wasm_compiler_rt.a', lambda: create_wasm_compiler_rt('wasm_compiler_rt.a'), extension='a')
 
   for actual in ret:
     if os.path.basename(actual) == 'libcxxabi.bc':
@@ -608,4 +644,3 @@ def show_ports():
   print 'Available ports:'
   for port in ports.ports:
     print '   ', port.show()
-

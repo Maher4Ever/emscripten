@@ -323,6 +323,58 @@ If manually bisecting:
     self.run_browser('page.html', 'You should see |load me right before|.', '/report_result?1')
     self.run_browser('page.html', 'You should see |load me right before|.', '/report_result?2')
 
+  def test_preload_caching_indexeddb_name(self):
+    open(os.path.join(self.get_dir(), 'somefile.txt'), 'w').write('''load me right before running the code please''')
+    def make_main(path):
+      print path
+      open(os.path.join(self.get_dir(), 'main.cpp'), 'w').write(self.with_report_result(r'''
+        #include <stdio.h>
+        #include <string.h>
+        #include <emscripten.h>
+
+        extern "C" {
+          extern int checkPreloadResults();
+        }
+
+        int main(int argc, char** argv) {
+          FILE *f = fopen("%s", "r");
+          char buf[100];
+          fread(buf, 1, 20, f);
+          buf[20] = 0;
+          fclose(f);
+          printf("|%%s|\n", buf);
+
+          int result = 0;
+
+          result += !strcmp("load me right before", buf);
+          result += checkPreloadResults();
+
+          REPORT_RESULT();
+          return 0;
+        }
+      ''' % path))
+
+    open(os.path.join(self.get_dir(), 'test.js'), 'w').write('''
+      mergeInto(LibraryManager.library, {
+        checkPreloadResults: function() {
+          var cached = 0;
+          var packages = Object.keys(Module['preloadResults']);
+          packages.forEach(function(package) {
+            var fromCache = Module['preloadResults'][package]['fromCache'];
+            if (fromCache)
+              ++ cached;
+          });
+          return cached;
+        }
+      });
+    ''')
+
+    make_main('somefile.txt')
+    Popen([PYTHON, FILE_PACKAGER, os.path.join(self.get_dir(), 'somefile.data'), '--use-preload-cache', '--indexedDB-name=testdb', '--preload', os.path.join(self.get_dir(), 'somefile.txt'), '--js-output=' + os.path.join(self.get_dir(), 'somefile.js')]).communicate()
+    Popen([PYTHON, EMCC, os.path.join(self.get_dir(), 'main.cpp'), '--js-library', os.path.join(self.get_dir(), 'test.js'), '--pre-js', 'somefile.js', '-o', 'page.html']).communicate()
+    self.run_browser('page.html', 'You should see |load me right before|.', '/report_result?1')
+    self.run_browser('page.html', 'You should see |load me right before|.', '/report_result?2')
+
   def test_multifile(self):
     # a few files inside a directory
     self.clear()
@@ -2524,6 +2576,9 @@ window.close = function() {
     ''')
     self.btest('sdl2_pumpevents.c', expected='7', args=['--pre-js', 'pre.js', '-s', 'USE_SDL=2'])
 
+  def test_sdl2_timer(self):
+    self.btest('sdl2_timer.c', expected='5', args=['-s', 'USE_SDL=2'])
+
   def test_sdl2_canvas_size(self):
     self.btest('sdl2_canvas_size.c', expected='1', args=['-s', 'USE_SDL=2'])
 
@@ -2956,6 +3011,10 @@ window.close = function() {
     try_delete('pthread-main.js')
     self.run_browser('test2.html', '', '/report_result?1')
 
+  # Test that if the main thread is performing a futex wait while a pthread needs it to do a proxied operation (before that pthread would wake up the main thread), that it's not a deadlock.
+  def test_pthread_proxying_in_futex_wait(self):
+    self.btest(path_from_root('tests', 'pthread', 'test_pthread_proxying_in_futex_wait.cpp'), expected='0', args=['-O3', '-s', 'USE_PTHREADS=2', '-s', 'PTHREAD_POOL_SIZE=1', '--separate-asm'], timeout=30)
+
   # test atomicrmw i64
   def test_atomicrmw_i64(self):
     Popen([PYTHON, EMCC, path_from_root('tests', 'atomicrmw_i64.ll'), '-s', 'USE_PTHREADS=1', '-s', 'IN_TEST_HARNESS=1', '-o', 'test.html']).communicate()
@@ -2993,6 +3052,9 @@ window.close = function() {
 
   def test_canvas_size_proxy(self):
     self.btest(path_from_root('tests', 'canvas_size_proxy.c'), expected='0', args=['--proxy-to-worker'])
+
+  def test_custom_messages_proxy(self):
+    self.btest(path_from_root('tests', 'custom_messages_proxy.c'), expected='1', args=['--proxy-to-worker', '--shell-file', path_from_root('tests', 'custom_messages_proxy_shell.html'), '--post-js', path_from_root('tests', 'custom_messages_proxy_postjs.js')])
 
   def test_separate_asm(self):
     for opts in [['-O0'], ['-O1'], ['-O2'], ['-O2', '--closure', '1']]:
@@ -3077,4 +3139,5 @@ window.close = function() {
 
   def test_binaryen(self):
     self.btest('browser_test_hello_world.c', expected='0', args=['-s', 'BINARYEN=1', '-s', 'BINARYEN_METHOD="interpret-binary"'])
+    self.btest('browser_test_hello_world.c', expected='0', args=['-s', 'BINARYEN=1', '-s', 'BINARYEN_METHOD="interpret-binary"', '-O2'])
 

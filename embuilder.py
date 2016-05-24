@@ -34,6 +34,7 @@ Available operations and tasks:
         libcxxabi
         gl
         native_optimizer
+        binaryen
         bullet
         freetype
         libpng
@@ -81,7 +82,7 @@ operation = sys.argv[1]
 if operation == 'build':
   tasks = sys.argv[2:]
   if 'ALL' in tasks:
-    tasks = ['libc', 'libc-mt', 'dlmalloc', 'dlmalloc_threadsafe', 'pthreads', 'libcxx', 'libcxx_noexcept', 'libcxxabi', 'gl', 'bullet', 'freetype', 'libpng', 'ogg', 'sdl2', 'sdl2-image', 'sdl2-ttf', 'sdl2-net', 'vorbis', 'zlib']
+    tasks = ['libc', 'libc-mt', 'dlmalloc', 'dlmalloc_threadsafe', 'pthreads', 'libcxx', 'libcxx_noexcept', 'libcxxabi', 'gl', 'binaryen', 'bullet', 'freetype', 'libpng', 'ogg', 'sdl2', 'sdl2-image', 'sdl2-ttf', 'sdl2-net', 'vorbis', 'zlib']
     if os.environ.get('EMSCRIPTEN_NATIVE_OPTIMIZER'):
       print 'Skipping building of native-optimizer since environment variable EMSCRIPTEN_NATIVE_OPTIMIZER is present and set to point to a prebuilt native optimizer path.'
     elif hasattr(shared, 'EMSCRIPTEN_NATIVE_OPTIMIZER'):
@@ -143,6 +144,13 @@ if operation == 'build':
       build('''
         int main() {}
       ''', ['optimizer.2.exe'], ['-O2'])
+    elif what == 'wasm_compiler_rt':
+      if shared.get_llvm_target() == shared.WASM_TARGET:
+        build('''
+          int main() {}
+        ''', ['wasm_compiler_rt.a'], ['-s', 'BINARYEN=1'])
+      else:
+        shared.logging.warning('wasm_compiler_rt not built when using JSBackend')
     elif what == 'zlib':
       build_port('zlib', 'libz.a', ['-s', 'USE_ZLIB=1'])
     elif what == 'bullet':
@@ -174,4 +182,3 @@ if operation == 'build':
 else:
   shared.logging.error('unfamiliar operation: ' + operation)
   sys.exit(1)
-
